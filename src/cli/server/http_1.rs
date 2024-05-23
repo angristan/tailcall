@@ -16,14 +16,15 @@ pub async fn start_http_1(
     let addr = sc.addr();
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    let mut builder = hyper::server::conn::http1::Builder::new().keep_alive(true);
+    let mut builder = hyper::server::conn::http1::Builder::new();
+    builder.keep_alive(true);
     super::log_launch(sc.as_ref());
 
-    let mut ty: impl GraphQLRequestLike + DeserializeOwned = GraphQLRequest;
+   /* let mut _ty: impl GraphQLRequestLike + DeserializeOwned = GraphQLRequest;
 
     if sc.blueprint.server.enable_batch_requests {
-        ty = GraphQLBatchRequest;
-    };
+        _ty = GraphQLBatchRequest;
+    };*/
 
 /*    let make_svc_single_req = async move {
         Ok::<_, anyhow::Error>(service_fn(move |req| {
@@ -43,17 +44,22 @@ pub async fn start_http_1(
 
     loop {
         let (stream, _) = listener.accept().await?;
+        let app_ctx = sc.app_ctx.clone();
+
+
         let connection = builder
             .serve_connection(
                 TokioIo::new(stream),
                 service_fn(move |req| {
+                    let app_ctx = app_ctx.clone();
                     async move {
                         let req = Request::from_hyper(req).await?;
-                        handle_request::<ty>(req, sc.app_ctx.clone()).await
+                        handle_request::<
+                            GraphQLRequest // TODO
+                        >(req, app_ctx).await
                     }
                 }),
-            )
-            .with_upgrades();
+            );
         tokio::spawn(async move {
             if let Err(err) = connection.await {
                 println!("Error serving HTTP connection: {err:?}");

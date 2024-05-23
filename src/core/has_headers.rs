@@ -1,4 +1,4 @@
-use hyper::HeaderMap;
+use hyper::header::HeaderMap;
 
 use crate::core::lambda::{EvaluationContext, ResolverContextLike};
 

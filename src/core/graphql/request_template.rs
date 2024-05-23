@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 
 use derive_setters::Setters;
 use hyper::HeaderMap;
-use reqwest::header::HeaderValue;
+use hyper::header::HeaderValue;
 use tailcall_hasher::TailcallHasher;
 
 use crate::core::config::{GraphQLOperationType, KeyValue};
@@ -52,7 +52,7 @@ impl RequestTemplate {
         }
         headers.insert(
             reqwest::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
+            reqwest::header::HeaderValue::from_static("application/json"),
         );
         headers.extend(ctx.headers().to_owned());
         req
@@ -62,7 +62,7 @@ impl RequestTemplate {
         &self,
         ctx: &C,
     ) -> anyhow::Result<reqwest::Request> {
-        let mut req = reqwest::Request::new(POST.to_hyper(), url::Url::parse(self.url.as_str())?);
+        let mut req = reqwest::Request::new(POST.to_reqwest(), url::Url::parse(self.url.as_str())?);
         req = self.set_headers(req, ctx);
         req = self.set_body(req, ctx);
         Ok(req)

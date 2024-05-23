@@ -2,6 +2,8 @@ use std::any::Any;
 
 use anyhow::Result;
 use async_graphql::{BatchResponse, Executor, Value};
+use bytes::Bytes;
+use http_body_util::Full;
 use hyper::header::{HeaderValue, CACHE_CONTROL, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 use once_cell::sync::Lazy;
@@ -130,7 +132,7 @@ impl GraphQLResponse {
     }
 
     fn default_body(&self) -> Result<Body> {
-        Ok(Body::from(serde_json::to_string(&self.0)?))
+        Ok(Full::new(Bytes::from(serde_json::to_string(&self.0)?)))
     }
 
     pub fn into_response(self) -> Result<Response<Body>> {

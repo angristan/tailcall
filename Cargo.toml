@@ -35,7 +35,7 @@ http-cache-reqwest = { version = "0.13.0", features = [
 moka = { version = "0.12.7", default-features = false, features = [
     "future",
 ], optional = true }
-hyper-rustls = { version = "0.25.0", optional = true }
+tokio-rustls = { version = "0.26.0", optional = true }
 rustls = { version = "0.23.5", optional = true, features = [
     "std",
 ], default-features = false }
@@ -190,7 +190,7 @@ cli = [
     "dep:mimalloc",
     "dep:http-cache-reqwest",
     "dep:moka",
-    "dep:hyper-rustls",
+    "dep:tokio-rustls",
     "dep:rustls",
     "dep:inquire",
     "dep:which",

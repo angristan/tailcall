@@ -2,9 +2,8 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::Result;
 use derive_setters::Setters;
-use hyper::header::CONTENT_TYPE;
-use hyper::{HeaderMap, Method};
-use reqwest::header::HeaderValue;
+use reqwest::Method;
+use reqwest::header::{HeaderValue, HeaderMap, CONTENT_TYPE, HeaderName};
 use tailcall_hasher::TailcallHasher;
 use url::Url;
 
@@ -57,7 +56,7 @@ impl RequestTemplate {
 
         for (k, v) in &self.headers {
             if let Ok(header_value) = HeaderValue::from_str(&v.render(ctx)) {
-                header_map.insert(k, header_value);
+                header_map.insert(HeaderName::from_static(k.as_str()), header_value);
             }
         }
 
@@ -86,8 +85,11 @@ impl RequestTemplate {
         if !headers.is_empty() {
             req_headers.extend(headers);
         }
-
-        req_headers.extend(ctx.headers().to_owned());
+        let h = ctx.headers().iter().fold(reqwest::header::HeaderMap::new(),|mut map, (k,v)| {
+            map.insert(HeaderName::from_static(k.as_str()), HeaderValue::from_static(v.to_str().unwrap()));
+            map
+        });
+        req_headers.extend(h);
 
         req_headers
     }

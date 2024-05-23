@@ -43,7 +43,7 @@ impl BasicVerifier {
 
 #[cfg(test)]
 pub mod tests {
-    use hyper::header::HeaderValue;
+    use reqwest::header::HeaderValue;
 
     use super::*;
 
@@ -121,7 +121,7 @@ testuser3:{SHA}Y2fEjdGT1W6nsLqtJbGUVeUp9e4=
         let mut req_ctx = RequestContext::default();
         req_ctx.allowed_headers.insert(
             "Authorization",
-            HeaderValue::from_static("Basic dGVzdHVzZXIyOm15cGFzc3dvcmQ"),
+            headers::HeaderValue::from_static("Basic dGVzdHVzZXIyOm15cGFzc3dvcmQ"),
         );
         let validation = provider.verify(&req_ctx).await;
         assert_eq!(validation, Verification::fail(Error::Invalid));

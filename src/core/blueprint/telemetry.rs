@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
-use hyper::header::{HeaderName, HeaderValue};
-use hyper::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
 use super::TryFoldConfig;

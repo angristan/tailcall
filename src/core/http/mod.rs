@@ -1,7 +1,7 @@
 pub use cache::*;
 pub use data_loader::*;
 pub use data_loader_request::*;
-use headers::HeaderValue;
+use reqwest::header::HeaderValue;
 pub use method::Method;
 pub use request_context::RequestContext;
 pub use request_handler::{handle_request, API_URL_PREFIX};

@@ -61,7 +61,7 @@ fn otlp_exporter(config: &OtlpExporter) -> TonicExporterBuilder {
 fn set_trace_provider(
     exporter: &TelemetryExporter,
 ) -> TraceResult<Option<OpenTelemetryLayer<Registry, Tracer>>> {
-    let provider = match exporter {
+/*    let provider = match exporter {
         TelemetryExporter::Stdout(config) => TracerProvider::builder()
             .with_batch_exporter(
                 {
@@ -99,9 +99,9 @@ fn set_trace_provider(
         .with_threads(false)
         .with_tracer(tracer);
 
-    global::set_tracer_provider(provider);
+    global::set_tracer_provider(provider);*/
 
-    Ok(Some(telemetry))
+    Ok(None)
 }
 
 fn set_logger_provider(
@@ -125,13 +125,17 @@ fn set_logger_provider(
             )
             .with_config(opentelemetry_sdk::logs::config().with_resource(RESOURCE.clone()))
             .build(),
-        TelemetryExporter::Otlp(config) => opentelemetry_otlp::new_pipeline()
+        TelemetryExporter::Otlp(config) => {
+            /*
+            opentelemetry_otlp::new_pipeline()
             .logging()
             .with_exporter(otlp_exporter(config))
             .with_log_config(opentelemetry_sdk::logs::config().with_resource(RESOURCE.clone()))
             .install_batch(runtime::Tokio)?
             .provider().clone()
-        ,
+            */
+            return Ok(None);
+        }
         // Prometheus works only with metrics
         TelemetryExporter::Prometheus(_) => return Ok(None),
         TelemetryExporter::Apollo(_) => return Ok(None),
@@ -163,11 +167,14 @@ fn set_meter_provider(exporter: &TelemetryExporter) -> MetricsResult<()> {
                 .with_resource(RESOURCE.clone())
                 .build()
         }
-        TelemetryExporter::Otlp(config) => opentelemetry_otlp::new_pipeline()
-            .metrics(Tokio)
-            .with_resource(RESOURCE.clone())
-            .with_exporter(otlp_exporter(config))
-            .build()?,
+        TelemetryExporter::Otlp(config) => {
+            // opentelemetry_otlp::new_pipeline()
+            //     .metrics(Tokio)
+            //     .with_resource(RESOURCE.clone())
+            //     .with_exporter(otlp_exporter(config))
+            //     .build()?
+            return Ok(());
+        }
         TelemetryExporter::Prometheus(_) => {
             let exporter = opentelemetry_prometheus::exporter()
                 .with_registry(prometheus::default_registry().clone())

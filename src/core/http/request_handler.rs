@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_graphql::ServerError;
+use bytes::Bytes;
 use hyper::header::{self, HeaderValue, CONTENT_TYPE};
 use hyper::http::Method;
 use hyper::{HeaderMap, Response, StatusCode};
@@ -49,16 +50,42 @@ fn prometheus_metrics(prometheus_exporter: &PrometheusExporter) -> Result<Respon
 fn not_found() -> Result<Response<Body>> {
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(Body::empty())?)
+        .body(Body::new(Bytes::new()))?)
 }
 
-fn create_request_context(req: &Request<Body>, app_ctx: &AppContext) -> RequestContext {
+fn create_request_context(req: &Request, app_ctx: &AppContext) -> RequestContext {
     let upstream = app_ctx.blueprint.upstream.clone();
     let allowed = upstream.allowed_headers;
-    let allowed_headers = create_allowed_headers(req.headers(), &allowed);
+    let allowed_headers = create_allowed_headers(&to_hyper_hmap(&req.headers), &allowed);
 
     let _allowed = app_ctx.blueprint.server.get_experimental_headers();
     RequestContext::from(app_ctx).allowed_headers(allowed_headers)
+}
+
+fn to_hyper_hmap(reqwest_headers: &reqwest::header::HeaderMap) -> HeaderMap {
+    let mut hyper_headers = HeaderMap::new();
+    for (key, value) in reqwest_headers.iter() {
+        if let (Ok(name), Ok(value_str)) = (
+            header::HeaderName::from_bytes(key.as_str().as_bytes()),
+            HeaderValue::from_str(value.to_str().unwrap_or_default()),
+        ) {
+            hyper_headers.insert(name, value_str);
+        }
+    }
+    hyper_headers
+}
+
+fn to_reqwest_hmap(hyper_headers: &HeaderMap) -> reqwest::header::HeaderMap {
+    let mut reqwest_headers = reqwest::header::HeaderMap::new();
+    for (key, value) in hyper_headers.iter() {
+        if let (Ok(name), Ok(value_str)) = (
+            reqwest::header::HeaderName::from_bytes(key.as_str().as_bytes()),
+            reqwest::header::HeaderValue::from_str(value.to_str().unwrap_or_default()),
+        ) {
+            reqwest_headers.insert(name, value_str);
+        }
+    }
+    reqwest_headers
 }
 
 fn update_cache_control_header(
@@ -75,7 +102,7 @@ fn update_cache_control_header(
 }
 
 pub fn update_response_headers(
-    resp: &mut hyper::Response<hyper::Body>,
+    resp: &mut Response<Body>,
     req_ctx: &RequestContext,
     app_ctx: &AppContext,
 ) {
@@ -97,13 +124,13 @@ pub fn update_response_headers(
 
 #[tracing::instrument(skip_all, fields(otel.name = "graphQL", otel.kind = ?SpanKind::Server))]
 pub async fn graphql_request<T: DeserializeOwned + GraphQLRequestLike>(
-    req: Request<Body>,
+    req: Request,
     app_ctx: &AppContext,
     req_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
     req_counter.set_http_route("/graphql");
     let req_ctx = Arc::new(create_request_context(&req, app_ctx));
-    let bytes = hyper::body::to_bytes(req.into_body()).await?;
+    let bytes = req.body;
     let graphql_request = serde_json::from_slice::<T>(&bytes);
     match graphql_request {
         Ok(request) => {
@@ -144,12 +171,12 @@ fn create_allowed_headers(headers: &HeaderMap, allowed: &BTreeSet<String>) -> He
 }
 
 async fn handle_origin_tailcall<T: DeserializeOwned + GraphQLRequestLike>(
-    req: Request<Body>,
+    req: Request,
     app_ctx: Arc<AppContext>,
     request_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
-    let method = req.method();
-    if method == Method::OPTIONS {
+    let method = &req.method;
+    if *method == Method::OPTIONS {
         let mut res = Response::new(Body::default());
         res.headers_mut().insert(
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -176,14 +203,14 @@ async fn handle_origin_tailcall<T: DeserializeOwned + GraphQLRequestLike>(
 }
 
 async fn handle_request_with_cors<T: DeserializeOwned + GraphQLRequestLike>(
-    req: Request<Body>,
+    req: Request,
     app_ctx: Arc<AppContext>,
     request_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
     // Safe to call `.unwrap()` because this method will only be called when
     // `cors` is `Some`
     let cors = app_ctx.blueprint.server.cors.as_ref().unwrap();
-    let (parts, body) = req.into_parts();
+    let parts = req.parts();
     let origin = parts.headers.get(&header::ORIGIN);
 
     let mut headers = HeaderMap::new();
@@ -211,7 +238,6 @@ async fn handle_request_with_cors<T: DeserializeOwned + GraphQLRequestLike>(
         // This header is applied only to non-preflight requests
         headers.extend(cors.expose_headers_to_header());
 
-        let req = Request::from_parts(parts, body);
         let mut response = handle_request_inner::<T>(req, app_ctx, request_counter).await?;
 
         let response_headers = response.headers_mut();
@@ -233,16 +259,16 @@ async fn handle_rest_apis(
     app_ctx: Arc<AppContext>,
     req_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
-    *request.uri_mut() = request.uri().path().replace(API_URL_PREFIX, "").parse()?;
+    request.uri = request.uri.path().replace(API_URL_PREFIX, "").parse()?;
     let req_ctx = Arc::new(create_request_context(&request, app_ctx.as_ref()));
     if let Some(p_request) = app_ctx.endpoints.matches(&request) {
         let http_route = format!("{API_URL_PREFIX}{}", p_request.path.as_str());
         req_counter.set_http_route(&http_route);
         let span = tracing::info_span!(
             "REST",
-            otel.name = format!("REST {} {}", request.method(), p_request.path.as_str()),
+            otel.name = format!("REST {} {}", request.method, p_request.path.as_str()),
             otel.kind = ?SpanKind::Server,
-            { HTTP_REQUEST_METHOD } = %request.method(),
+            { HTTP_REQUEST_METHOD } = %request.method,
             { HTTP_ROUTE } = http_route
         );
         return async {
@@ -268,20 +294,20 @@ async fn handle_request_inner<T: DeserializeOwned + GraphQLRequestLike>(
     app_ctx: Arc<AppContext>,
     req_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
-    if req.uri().path().starts_with(API_URL_PREFIX) {
+    if req.uri.path().starts_with(API_URL_PREFIX) {
         return handle_rest_apis(req, app_ctx, req_counter).await;
     }
 
-    match *req.method() {
+    match req.method {
         // NOTE:
         // The first check for the route should be for `/graphql`
         // This is always going to be the most used route.
-        hyper::Method::POST if req.uri().path() == "/graphql" => {
+        hyper::Method::POST if req.uri.path() == "/graphql" => {
             graphql_request::<T>(req, app_ctx.as_ref(), req_counter).await
         }
         hyper::Method::POST
             if app_ctx.blueprint.server.enable_showcase
-                && req.uri().path() == "/showcase/graphql" =>
+                && req.uri.path() == "/showcase/graphql" =>
         {
             let app_ctx =
                 match showcase::create_app_ctx::<T>(&req, app_ctx.runtime.clone(), false).await? {
@@ -296,7 +322,7 @@ async fn handle_request_inner<T: DeserializeOwned + GraphQLRequestLike>(
             if let Some(TelemetryExporter::Prometheus(prometheus)) =
                 app_ctx.blueprint.telemetry.export.as_ref()
             {
-                if req.uri().path() == prometheus.path {
+                if req.uri.path() == prometheus.path {
                     return prometheus_metrics(prometheus);
                 }
             };
@@ -313,8 +339,8 @@ async fn handle_request_inner<T: DeserializeOwned + GraphQLRequestLike>(
     fields(
         otel.name = "request",
         otel.kind = ?SpanKind::Server,
-        url.path = %req.uri().path(),
-        http.request.method = %req.method()
+        url.path = %req.uri.path(),
+        http.request.method = %req.method
     )
 )]
 pub async fn handle_request<T: DeserializeOwned + GraphQLRequestLike>(
@@ -326,8 +352,8 @@ pub async fn handle_request<T: DeserializeOwned + GraphQLRequestLike>(
 
     let response = if app_ctx.blueprint.server.cors.is_some() {
         handle_request_with_cors::<T>(req, app_ctx, &mut req_counter).await
-    } else if let Some(origin) = req.headers().get(&header::ORIGIN) {
-        if origin == TAILCALL_HTTPS_ORIGIN || origin == TAILCALL_HTTP_ORIGIN {
+    } else if let Some(origin) = req.headers.get(&reqwest::header::ORIGIN) {
+        if *origin == TAILCALL_HTTPS_ORIGIN || *origin == TAILCALL_HTTP_ORIGIN {
             handle_origin_tailcall::<T>(req, app_ctx, &mut req_counter).await
         } else {
             handle_request_inner::<T>(req, app_ctx, &mut req_counter).await

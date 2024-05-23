@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 
 use derive_setters::Setters;
-use hyper::HeaderMap;
-use reqwest::header::HeaderValue;
+use reqwest::header::{HeaderValue, HeaderMap, HeaderName};
 use tailcall_hasher::TailcallHasher;
 use url::Url;
 
@@ -86,7 +86,7 @@ impl RequestTemplate {
 
         for (k, v) in &self.headers {
             if let Ok(header_value) = HeaderValue::from_str(&v.render(ctx)) {
-                header_map.insert(k, header_value);
+                header_map.insert(reqwest::header::HeaderName::from_str(k.as_str()).unwrap(), header_value);
             }
         }
 
@@ -161,8 +161,11 @@ impl RequestTemplate {
                 },
             );
         }
-
-        headers.extend(ctx.headers().to_owned());
+        let req_headers = ctx.headers().iter().fold(reqwest::header::HeaderMap::new(),|mut map, (k,v)| {
+            map.insert(HeaderName::from_static(k.as_str()), HeaderValue::from_static(v.to_str().unwrap()));
+            map
+        });
+        headers.extend(req_headers);
         req
     }
 
@@ -198,7 +201,7 @@ impl TryFrom<Endpoint> for RequestTemplate {
             .iter()
             .map(|(k, v)| Ok((k.to_owned(), Mustache::parse(v.as_str())?)))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let method = endpoint.method.clone().to_hyper();
+        let method = endpoint.method.clone().to_reqwest();
         let headers = endpoint
             .headers
             .iter()
@@ -566,10 +569,10 @@ mod tests {
             let endpoint = crate::core::endpoint::Endpoint::new(
                 "http://localhost:3000/{{foo.bar}}".to_string(),
             )
-            .method(crate::core::http::Method::POST)
-            .query(vec![("foo".to_string(), "{{foo.bar}}".to_string())])
-            .headers(headers)
-            .body(Some("{{foo.bar}}".into()));
+                .method(crate::core::http::Method::POST)
+                .query(vec![("foo".to_string(), "{{foo.bar}}".to_string())])
+                .headers(headers)
+                .body(Some("{{foo.bar}}".into()));
             let tmpl = RequestTemplate::try_from(endpoint).unwrap();
             let ctx = Context::default().value(json!({
               "foo": {
@@ -601,10 +604,10 @@ mod tests {
             let endpoint = crate::core::endpoint::Endpoint::new(
                 "http://localhost:3000/?a={{args.a}}&q=1".to_string(),
             )
-            .query(vec![
-                ("b".to_string(), "1".to_string()),
-                ("c".to_string(), "{{args.c}}".to_string()),
-            ]);
+                .query(vec![
+                    ("b".to_string(), "1".to_string()),
+                    ("c".to_string(), "{{args.c}}".to_string()),
+                ]);
             let tmpl = RequestTemplate::try_from(endpoint).unwrap();
             let ctx = Context::default();
             let req = tmpl.to_request(&ctx).unwrap();

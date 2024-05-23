@@ -13,7 +13,7 @@ use crate::core::lambda::EvaluationError;
 #[derive(Clone, Debug, Default, Setters)]
 pub struct Response<Body> {
     pub status: reqwest::StatusCode,
-    pub headers: reqwest::header::HeaderMap,
+    pub headers: hyper::header::HeaderMap,
     pub body: Body,
 }
 
@@ -50,6 +50,13 @@ impl Response<Bytes> {
     pub async fn from_reqwest(resp: reqwest::Response) -> Result<Self> {
         let status = resp.status();
         let headers = resp.headers().to_owned();
+        let headers = headers.iter().fold(hyper::header::HeaderMap::default(), |mut acc, (k, v)| {
+            acc.insert(
+                hyper::header::HeaderName::from_bytes(k.as_str().as_bytes()).unwrap(),
+                hyper::header::HeaderValue::from_bytes(v.as_bytes()).unwrap(),
+            );
+            acc
+        });
         let body = resp.bytes().await?;
         Ok(Response { status, headers, body })
     }
@@ -57,7 +64,7 @@ impl Response<Bytes> {
     pub fn empty() -> Self {
         Response {
             status: reqwest::StatusCode::OK,
-            headers: reqwest::header::HeaderMap::default(),
+            headers: hyper::header::HeaderMap::default(),
             body: Bytes::new(),
         }
     }
@@ -91,7 +98,14 @@ impl Response<Bytes> {
     }
 
     pub fn to_grpc_error(&self, operation: &ProtobufOperation) -> anyhow::Error {
-        let grpc_status = match Status::from_header_map(&self.headers) {
+        let headers = self.headers.iter().fold(reqwest::header::HeaderMap::default(), |mut acc, (k, v)| {
+            acc.insert(
+                reqwest::header::HeaderName::from_bytes(k.as_str().as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_bytes(v.as_bytes()).unwrap(),
+            );
+            acc
+        });
+        let grpc_status = match Status::from_header_map(&headers) {
             Some(status) => status,
             None => {
                 return EvaluationError::IOException(
