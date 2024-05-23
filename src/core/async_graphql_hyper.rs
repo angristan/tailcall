@@ -3,9 +3,10 @@ use std::any::Any;
 use anyhow::Result;
 use async_graphql::{BatchResponse, Executor, Value};
 use hyper::header::{HeaderValue, CACHE_CONTROL, CONTENT_TYPE};
-use hyper::{Body, Response, StatusCode};
+use hyper::{Response, StatusCode};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use crate::core::Body;
 
 #[async_trait::async_trait]
 pub trait GraphQLRequestLike {
@@ -132,7 +133,7 @@ impl GraphQLResponse {
         Ok(Body::from(serde_json::to_string(&self.0)?))
     }
 
-    pub fn into_response(self) -> Result<Response<hyper::Body>> {
+    pub fn into_response(self) -> Result<Response<Body>> {
         self.build_response(StatusCode::OK, self.default_body()?)
     }
 
@@ -146,7 +147,7 @@ impl GraphQLResponse {
     /// Transforms a plain `GraphQLResponse` into a `Response<Body>`.
     /// Differs as `to_response` by flattening the response's data
     /// `{"data": {"user": {"name": "John"}}}` becomes `{"name": "John"}`.
-    pub fn into_rest_response(self) -> Result<Response<hyper::Body>> {
+    pub fn into_rest_response(self) -> Result<Response<Body>> {
         if !self.0.is_ok() {
             return self.build_response(StatusCode::INTERNAL_SERVER_ERROR, self.default_body()?);
         }
@@ -207,6 +208,7 @@ impl GraphQLResponse {
 #[cfg(test)]
 mod tests {
     use async_graphql::{Name, Response, ServerError, Value};
+    use http_body_util::BodyExt;
     use hyper::StatusCode;
     use indexmap::IndexMap;
     use serde_json::json;
@@ -226,9 +228,11 @@ mod tests {
         assert_eq!(rest_response.status(), StatusCode::OK);
         assert_eq!(rest_response.headers()["content-type"], "application/json");
         assert_eq!(
-            hyper::body::to_bytes(rest_response.into_body())
+            rest_response.into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
             json!({ "name": name }).to_string().as_bytes().to_vec()
         );
@@ -253,9 +257,11 @@ mod tests {
         assert_eq!(rest_response.status(), StatusCode::OK);
         assert_eq!(rest_response.headers()["content-type"], "application/json");
         assert_eq!(
-            hyper::body::to_bytes(rest_response.into_body())
+            rest_response.into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
             json!([
                 { "name": names[0] },
@@ -282,9 +288,11 @@ mod tests {
         assert_eq!(rest_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(rest_response.headers()["content-type"], "application/json");
         assert_eq!(
-            hyper::body::to_bytes(rest_response.into_body())
+            rest_response.into_body()
+                .collect()
                 .await
                 .unwrap()
+                .to_bytes()
                 .to_vec(),
             json!({
                 "data": null,

@@ -1,17 +1,17 @@
 #![allow(clippy::too_many_arguments)]
 use std::sync::Arc;
 
-use hyper::server::conn::AddrIncoming;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::Server;
+use hyper::service::service_fn;
 use hyper_rustls::TlsAcceptor;
+use hyper_util::rt::TokioExecutor;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
 
 use super::server_config::ServerConfig;
 use crate::cli::CLIError;
-use crate::core::async_graphql_hyper::{GraphQLBatchRequest, GraphQLRequest};
-use crate::core::http::handle_request;
+use crate::core::async_graphql_hyper::{GraphQLBatchRequest, GraphQLRequest, GraphQLRequestLike};
+use crate::core::http::{handle_request, Request};
 
 pub async fn start_http_2(
     sc: Arc<ServerConfig>,
@@ -20,28 +20,48 @@ pub async fn start_http_2(
     server_up_sender: Option<oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
     let addr = sc.addr();
-    let incoming = AddrIncoming::bind(&addr)?;
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+
     let acceptor = TlsAcceptor::builder()
         .with_single_cert(cert, key.clone_key())?
         .with_http2_alpn()
-        .with_incoming(incoming);
-    let make_svc_single_req = make_service_fn(|_conn| {
-        let state = Arc::clone(&sc);
-        async move {
-            Ok::<_, anyhow::Error>(service_fn(move |req| {
-                handle_request::<GraphQLRequest>(req, state.app_ctx.clone())
-            }))
-        }
-    });
+        .with_acceptor(listener);
 
-    let make_svc_batch_req = make_service_fn(|_conn| {
-        let state = Arc::clone(&sc);
-        async move {
-            Ok::<_, anyhow::Error>(service_fn(move |req| {
-                handle_request::<GraphQLBatchRequest>(req, state.app_ctx.clone())
-            }))
-        }
-    });
+    let mut builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+
+
+    let mut ty: impl GraphQLRequestLike + DeserializeOwned = GraphQLRequest;
+
+    if sc.blueprint.server.enable_batch_requests {
+        ty = GraphQLBatchRequest;
+    };
+
+    if let Some(sender) = server_up_sender {
+        sender
+            .send(())
+            .or(Err(anyhow::anyhow!("Failed to send message")))?;
+    }
+
+
+    loop {
+        let (stream, _) = acceptor.;
+        let connection = builder
+            .serve_connection(
+                stream,
+                service_fn(move |req| {
+                    async move {
+                        let req = Request::from_hyper(req).await?;
+                        handle_request::<ty>(req, sc.app_ctx.clone()).await
+                    }
+                }),
+            )
+            .with_upgrades();
+        tokio::spawn(async move {
+            if let Err(err) = connection.await {
+                println!("Error serving HTTP connection: {err:?}");
+            }
+        });
+    }
 
     let builder = Server::builder(acceptor).http2_only(true);
 

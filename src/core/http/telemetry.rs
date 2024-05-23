@@ -1,5 +1,5 @@
 use anyhow::Result;
-use hyper::{Body, Request, Response};
+use hyper::Response;
 use once_cell::sync::Lazy;
 use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
@@ -10,6 +10,8 @@ use opentelemetry_semantic_conventions::trace::{
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::blueprint::telemetry::Telemetry;
+use crate::core::Body;
+use crate::core::http::Request;
 
 static HTTP_SERVER_REQUEST_COUNT: Lazy<Counter<u64>> = Lazy::new(|| {
     let meter = opentelemetry::global::meter("http_request");
@@ -26,17 +28,17 @@ pub struct RequestCounter {
 }
 
 impl RequestCounter {
-    pub fn new(telemetry: &Telemetry, req: &Request<Body>) -> Self {
+    pub fn new(telemetry: &Telemetry, req: &Request) -> Self {
         if telemetry.export.is_none() {
             return Self::default();
         }
 
         let observable_headers = &telemetry.request_headers;
-        let headers = req.headers();
+        let headers = &req.headers;
         let mut attributes = Vec::with_capacity(observable_headers.len() + 3);
 
-        attributes.push(KeyValue::new(URL_PATH, req.uri().path().to_string()));
-        attributes.push(KeyValue::new(HTTP_REQUEST_METHOD, req.method().to_string()));
+        attributes.push(KeyValue::new(URL_PATH, req.uri.path().to_string()));
+        attributes.push(KeyValue::new(HTTP_REQUEST_METHOD, req.method.to_string()));
 
         for name in observable_headers {
             if let Some(value) = headers.get(name) {
@@ -70,9 +72,9 @@ pub fn get_response_status_code(response: &Response<Body>) -> KeyValue {
     KeyValue::new(HTTP_RESPONSE_STATUS_CODE, response.status().as_u16() as i64)
 }
 
-pub fn propagate_context(req: &Request<Body>) {
+pub fn propagate_context(req: &Request) {
     let context = opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(req.headers()))
+        propagator.extract(&HeaderExtractor(&req.headers))
     });
 
     tracing::Span::current().set_parent(context);

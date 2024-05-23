@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use super::endpoint::Endpoint;
 use super::partial_request::PartialRequest;
-use super::Request;
 use crate::core::blueprint::Blueprint;
 use crate::core::http::RequestContext;
 use crate::core::macros::MergeRight;

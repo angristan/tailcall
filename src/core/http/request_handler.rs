@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_graphql::ServerError;
 use hyper::header::{self, HeaderValue, CONTENT_TYPE};
 use hyper::http::Method;
-use hyper::{Body, HeaderMap, Request, Response, StatusCode};
+use hyper::{HeaderMap, Response, StatusCode};
 use opentelemetry::trace::SpanKind;
 use opentelemetry_semantic_conventions::trace::{HTTP_REQUEST_METHOD, HTTP_ROUTE};
 use prometheus::{Encoder, ProtobufEncoder, TextEncoder, TEXT_FORMAT};
@@ -16,9 +16,10 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::request_context::RequestContext;
 use super::telemetry::{get_response_status_code, RequestCounter};
-use super::{showcase, telemetry, AppContext, TAILCALL_HTTPS_ORIGIN, TAILCALL_HTTP_ORIGIN};
+use super::{showcase, telemetry, AppContext, TAILCALL_HTTPS_ORIGIN, TAILCALL_HTTP_ORIGIN, Request};
 use crate::core::async_graphql_hyper::{GraphQLRequestLike, GraphQLResponse};
 use crate::core::blueprint::telemetry::TelemetryExporter;
+use crate::core::Body;
 use crate::core::config::{PrometheusExporter, PrometheusFormat};
 
 pub const API_URL_PREFIX: &str = "/api";
@@ -228,7 +229,7 @@ async fn handle_request_with_cors<T: DeserializeOwned + GraphQLRequestLike>(
 }
 
 async fn handle_rest_apis(
-    mut request: Request<Body>,
+    mut request: Request,
     app_ctx: Arc<AppContext>,
     req_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
@@ -263,7 +264,7 @@ async fn handle_rest_apis(
 }
 
 async fn handle_request_inner<T: DeserializeOwned + GraphQLRequestLike>(
-    req: Request<Body>,
+    req: Request,
     app_ctx: Arc<AppContext>,
     req_counter: &mut RequestCounter,
 ) -> Result<Response<Body>> {
@@ -317,7 +318,7 @@ async fn handle_request_inner<T: DeserializeOwned + GraphQLRequestLike>(
     )
 )]
 pub async fn handle_request<T: DeserializeOwned + GraphQLRequestLike>(
-    req: Request<Body>,
+    req: Request,
     app_ctx: Arc<AppContext>,
 ) -> Result<Response<Body>> {
     telemetry::propagate_context(&req);
