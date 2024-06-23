@@ -1,9 +1,10 @@
 
 use serde_json_borrow::Value;
+use crate::core::auth::error::Error;
 
 use crate::core::data_loader::DedupeResult;
-use crate::core::ir::model::{IoId, IR};
-use crate::core::ir::Error;
+use crate::core::jit::ir::IR;
+use crate::core::ir::model::IoId;
 use crate::core::runtime::TargetRuntime;
 
 /// An async executor for the IR.
