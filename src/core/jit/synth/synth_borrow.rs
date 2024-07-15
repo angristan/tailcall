@@ -1,23 +1,37 @@
 use serde_json_borrow::{ObjectAsVec, Value};
 
-use crate::core::jit::model::{Children, Field};
+use crate::core::jit::model::{Field, Nested, Variables};
 use crate::core::jit::store::{Data, Store};
 use crate::core::jit::ExecutionPlan;
 
 pub struct SynthBorrow<'a> {
-    selection: Vec<Field<Children>>,
+    selection: Vec<Field<Nested>>,
     store: Store<Value<'a>>,
+    variables: Variables<async_graphql_value::ConstValue>,
 }
 
 impl<'a> SynthBorrow<'a> {
-    pub fn new(plan: ExecutionPlan, store: Store<Value<'a>>) -> Self {
-        Self { selection: plan.into_children(), store }
+    pub fn new(
+        plan: ExecutionPlan,
+        store: Store<Value<'a>>,
+        variables: Variables<async_graphql_value::ConstValue>,
+    ) -> Self {
+        Self { selection: plan.into_nested(), store, variables }
+    }
+
+    #[inline(always)]
+    fn include<T>(&self, field: &Field<T>) -> bool {
+        !field.skip(&self.variables)
     }
 
     pub fn synthesize(&self) -> Value {
         let mut data = ObjectAsVec::default();
 
         for child in self.selection.iter() {
+            if !self.include(child) {
+                continue;
+            }
+
             let val = self.iter(child, None, None);
             data.insert(child.name.as_str(), val);
         }
@@ -33,7 +47,7 @@ impl<'a> SynthBorrow<'a> {
     #[inline(always)]
     fn iter<'b>(
         &'b self,
-        node: &'b Field<Children>,
+        node: &'b Field<Nested>,
         parent: Option<&'b Value>,
         index: Option<usize>,
     ) -> Value {
@@ -77,40 +91,52 @@ impl<'a> SynthBorrow<'a> {
     #[inline(always)]
     fn iter_inner<'b>(
         &'b self,
-        node: &'b Field<Children>,
+        node: &'b Field<Nested>,
         parent: &'b Value,
         index: Option<usize>,
     ) -> Value {
+        let include = self.include(node);
+
         match parent {
             Value::Object(obj) => {
                 let mut ans = ObjectAsVec::default();
-                let children = node.children();
-
-                if children.is_empty() {
-                    let val = obj.get(node.name.as_str());
-                    // if it's a leaf node, then push the value
-                    if let Some(val) = val {
-                        ans.insert(node.name.as_str(), val.to_owned());
-                    } else {
-                        return Value::Null;
-                    }
-                } else {
-                    for child in children {
-                        let val = obj.get(child.name.as_str());
+                let children = node.nested();
+                if include {
+                    if children.is_empty() {
+                        let val = obj.get(node.name.as_str());
+                        // if it's a leaf node, then push the value
                         if let Some(val) = val {
-                            ans.insert(child.name.as_str(), self.iter_inner(child, val, index));
+                            ans.insert(node.name.as_str(), val.to_owned());
                         } else {
-                            ans.insert(child.name.as_str(), self.iter(child, None, index));
+                            return Value::Null;
+                        }
+                    } else {
+                        for child in children {
+                            let include = self.include(child);
+                            if include {
+                                let val = obj.get(child.name.as_str());
+                                if let Some(val) = val {
+                                    ans.insert(
+                                        child.name.as_str(),
+                                        self.iter_inner(child, val, index),
+                                    );
+                                } else {
+                                    ans.insert(child.name.as_str(), self.iter(child, None, index));
+                                }
+                            }
                         }
                     }
                 }
+
                 Value::Object(ans)
             }
             Value::Array(arr) => {
                 let mut ans = vec![];
-                for (i, val) in arr.iter().enumerate() {
-                    let val = self.iter_inner(node, val, Some(i));
-                    ans.push(val)
+                if include {
+                    for (i, val) in arr.iter().enumerate() {
+                        let val = self.iter_inner(node, val, Some(i));
+                        ans.push(val)
+                    }
                 }
                 Value::Array(ans)
             }
@@ -121,7 +147,6 @@ impl<'a> SynthBorrow<'a> {
 
 #[cfg(test)]
 mod tests {
-
     use serde_json_borrow::Value;
 
     use crate::core::blueprint::Blueprint;
@@ -192,9 +217,9 @@ mod tests {
                         Data::Single(serde_json::from_str(USER1).unwrap()),
                         Data::Single(serde_json::from_str(USER2).unwrap()),
                     ]
-                        .into_iter()
-                        .enumerate()
-                        .collect(),
+                    .into_iter()
+                    .enumerate()
+                    .collect(),
                 ),
                 TestData::Users => Data::Single(serde_json::from_str(USERS).unwrap()),
             }
@@ -208,11 +233,7 @@ mod tests {
         let config = Config::from_sdl(CONFIG).to_result().unwrap();
         let config = ConfigModule::from(config);
 
-        let builder = Builder::new(
-            &Blueprint::try_from(&config).unwrap(),
-            doc,
-            Variables::new(),
-        );
+        let builder = Builder::new(&Blueprint::try_from(&config).unwrap(), doc);
         let plan = builder.build().unwrap();
 
         let store = store
@@ -222,7 +243,7 @@ mod tests {
                 store
             });
 
-        let synth = SynthBorrow::new(plan, store);
+        let synth = SynthBorrow::new(plan, store, Variables::default());
         let val = synth.synthesize();
 
         serde_json::to_string_pretty(&val).unwrap()
@@ -298,8 +319,9 @@ mod tests {
 
     #[test]
     fn test_json_placeholder() {
-        let synth = JsonPlaceholder::init("{ posts { id title userId user { id name } } }");
-        let val = synth.synthesize().unwrap();
+        let synth: Box<SynthBorrow> =
+            JsonPlaceholder::init("{ posts { id title userId user { id name } } }");
+        let val = synth.synthesize();
         insta::assert_snapshot!(serde_json::to_string_pretty(&val).unwrap())
     }
 }

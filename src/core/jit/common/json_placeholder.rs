@@ -1,35 +1,87 @@
 use std::collections::HashMap;
 
 use async_graphql::Value;
+use async_graphql_value::ConstValue;
+use serde::de::DeserializeOwned;
 
 use crate::core::blueprint::Blueprint;
 use crate::core::config::{Config, ConfigModule};
+use crate::core::jit;
 use crate::core::jit::builder::Builder;
+use crate::core::jit::model::{ExecutionPlan, FieldId};
 use crate::core::jit::store::{Data, Store};
-use crate::core::jit::synth::Synth;
+use crate::core::jit::synth::{Synth, SynthBorrow};
 use crate::core::jit::Variables;
-use crate::core::json::JsonLike;
+use crate::core::json::{JsonLike, JsonLikeOwned, JsonObjectLike};
 use crate::core::valid::Validator;
 
 /// NOTE: This is a bit of a boilerplate reducing module that is used in tests
 /// and benchmarks.
 pub struct JsonPlaceholder;
 
+pub trait SynthExt<Value> {
+    fn init(plan: ExecutionPlan, data: Vec<(FieldId, Data<Value>)>) -> Self
+    where
+        Self: Sized;
+    fn synthesize(&'static self) -> jit::Result<Value>;
+}
+
+impl SynthExt<ConstValue> for Synth {
+    fn init(plan: ExecutionPlan, data: Vec<(FieldId, Data<Value>)>) -> Self {
+        let store = data
+            .into_iter()
+            .fold(Store::new(), |mut store, (id, data)| {
+                store.set_data(id, data.map(Ok));
+                store
+            });
+
+        let vars = Variables::new();
+        Synth::new(plan, store, vars)
+    }
+
+    fn synthesize(&'static self) -> jit::Result<Value> {
+        self.synthesize()
+    }
+}
+
+impl SynthExt<serde_json_borrow::Value<'static>> for SynthBorrow<'static> {
+    fn init(
+        plan: ExecutionPlan,
+        data: Vec<(FieldId, Data<serde_json_borrow::Value<'static>>)>,
+    ) -> Self {
+        let store = data
+            .into_iter()
+            .fold(Store::new(), |mut store, (id, data)| {
+                store.set_data(id, data);
+                store
+            });
+
+        let vars = Variables::new();
+        SynthBorrow::new(plan, store, vars)
+    }
+
+    fn synthesize(&'static self) -> jit::Result<serde_json_borrow::Value<'static>> {
+        Ok(self.synthesize())
+    }
+}
+
+struct TestData<T> {
+    posts: Vec<T>,
+    users: HashMap<usize, Data<T>>,
+}
+
 impl JsonPlaceholder {
     const POSTS: &'static str = include_str!("posts.json");
     const USERS: &'static str = include_str!("users.json");
     const CONFIG: &'static str = include_str!("../fixtures/jsonplaceholder-mutation.graphql");
 
-    pub fn init(query: &str) -> Synth {
+    fn values<Value: JsonLikeOwned + DeserializeOwned + Clone>() -> TestData<Value> {
         let posts = serde_json::from_str::<Vec<Value>>(Self::POSTS).unwrap();
         let users = serde_json::from_str::<Vec<Value>>(Self::USERS).unwrap();
-
         let user_map = users.iter().fold(HashMap::new(), |mut map, user| {
-            let id = if let Value::Object(user) = user {
-                user.get("id").and_then(|u| u.as_u64())
-            } else {
-                None
-            };
+            let id = user
+                .as_object()
+                .and_then(|user| user.get_key("id").and_then(|u| u.as_u64()));
 
             if let Some(id) = id {
                 map.insert(id, user);
@@ -40,33 +92,31 @@ impl JsonPlaceholder {
         let users: HashMap<_, _> = posts
             .iter()
             .map(|post| {
-                let user_id = if let Value::Object(post) = post {
-                    post.get("userId").and_then(|u| u.as_u64())
-                } else {
-                    None
-                };
+                let user_id = post
+                    .as_object()
+                    .and_then(|post| post.get_key("userId").and_then(|u| u.as_u64()));
 
                 if let Some(user_id) = user_id {
                     if let Some(user) = user_map.get(&user_id) {
                         user.to_owned().to_owned().to_owned()
                     } else {
-                        Value::Null
+                        Value::null()
                     }
                 } else {
-                    Value::Null
+                    Value::null()
                 }
             })
-            .map(Ok)
             .map(Data::Single)
             .enumerate()
             .collect();
 
-        let config = ConfigModule::from(Config::from_sdl(Self::CONFIG).to_result().unwrap());
-        let builder = Builder::new(
-            &Blueprint::try_from(&config).unwrap(),
-            async_graphql::parser::parse_query(query).unwrap(),
-        );
-        let plan = builder.build().unwrap();
+        TestData { posts, users }
+    }
+
+    fn data<Value: JsonLikeOwned + DeserializeOwned + Clone>(
+        plan: &ExecutionPlan,
+    ) -> Vec<(FieldId, Data<Value>)> {
+        let TestData { posts, users } = Self::values();
         let posts_id = plan.find_field_path(&["posts"]).unwrap().id.to_owned();
         let users_id = plan
             .find_field_path(&["posts", "user"])
@@ -74,16 +124,30 @@ impl JsonPlaceholder {
             .id
             .to_owned();
         let store = [
-            (posts_id, Data::Single(Ok(Value::List(posts)))),
+            (posts_id, Data::Single(<Value as JsonLike>::array(posts))),
             (users_id, Data::Multiple(users)),
-        ]
-        .into_iter()
-        .fold(Store::new(), |mut store, (id, data)| {
-            store.set_data(id, data);
-            store
-        });
+        ];
 
-        let vars = Variables::new();
-        Synth::new(plan, store, vars)
+        store.to_vec()
+    }
+
+    fn plan(query: &str) -> ExecutionPlan {
+        let config = ConfigModule::from(Config::from_sdl(Self::CONFIG).to_result().unwrap());
+        let builder = Builder::new(
+            &Blueprint::try_from(&config).unwrap(),
+            async_graphql::parser::parse_query(query).unwrap(),
+        );
+        builder.build().unwrap()
+    }
+
+    pub fn init<
+        Value: JsonLikeOwned + DeserializeOwned + Clone + 'static,
+        Synth: SynthExt<Value> + 'static,
+    >(
+        query: &str,
+    ) -> Box<Synth> {
+        let plan = Self::plan(query);
+        let data = Self::data::<Value>(&plan);
+        Box::new(Synth::init(plan, data))
     }
 }

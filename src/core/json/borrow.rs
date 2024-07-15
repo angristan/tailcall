@@ -17,6 +17,10 @@ impl<'a> JsonLike<'a> for Value<'a> {
         Value::Null
     }
 
+    fn array(arr: Vec<Self>) -> Self {
+        Value::Array(arr)
+    }
+
     fn as_array(&self) -> Option<&Vec<Value>> {
         match self {
             Value::Array(array) => Some(array),

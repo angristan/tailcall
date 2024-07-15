@@ -16,9 +16,24 @@ impl<'a, Value: JsonLike<'a> + Clone> JsonObjectLike<'a> for IndexMap<Name, Valu
 impl<'a> JsonLike<'a> for ConstValue {
     type JsonObject = IndexMap<Name, ConstValue>;
 
+    fn null() -> Self {
+        Default::default()
+    }
+
+    fn array(arr: Vec<Self>) -> Self {
+        ConstValue::List(arr)
+    }
+
     fn as_array(&'a self) -> Option<&'a Vec<Self>> {
         match self {
             ConstValue::List(seq) => Some(seq),
+            _ => None,
+        }
+    }
+
+    fn as_object(&'a self) -> Option<&'a Self::JsonObject> {
+        match self {
+            ConstValue::Object(map) => Some(map),
             _ => None,
         }
     }
@@ -87,16 +102,5 @@ impl<'a> JsonLike<'a> for ConstValue {
     fn group_by(&'a self, path: &'a [String]) -> HashMap<String, Vec<&'a Self>> {
         let src = gather_path_matches(self, path, vec![]);
         group_by_key(src)
-    }
-
-    fn null() -> Self {
-        Default::default()
-    }
-
-    fn as_object(&'a self) -> Option<&'a Self::JsonObject> {
-        match self {
-            ConstValue::Object(map) => Some(map),
-            _ => None,
-        }
     }
 }

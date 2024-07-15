@@ -12,8 +12,20 @@ impl<'a> JsonObjectLike<'a> for serde_json::Map<String, serde_json::Value> {
 impl<'a> JsonLike<'a> for serde_json::Value {
     type JsonObject = serde_json::Map<String, serde_json::Value>;
 
+    fn null() -> Self {
+        Self::Null
+    }
+
+    fn array(arr: Vec<Self>) -> Self {
+        Self::Array(arr)
+    }
+
     fn as_array(&'a self) -> Option<&'a Vec<Self>> {
         self.as_array()
+    }
+
+    fn as_object(&self) -> Option<&Self::JsonObject> {
+        self.as_object()
     }
 
     fn as_str(&self) -> Option<&str> {
@@ -65,13 +77,5 @@ impl<'a> JsonLike<'a> for serde_json::Value {
     fn group_by(&'a self, path: &'a [String]) -> HashMap<String, Vec<&Self>> {
         let src = super::gather_path_matches(self, path, vec![]);
         super::group_by_key(src)
-    }
-
-    fn null() -> Self {
-        Self::Null
-    }
-
-    fn as_object(&self) -> Option<&Self::JsonObject> {
-        self.as_object()
     }
 }

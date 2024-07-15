@@ -1,11 +1,16 @@
 use std::collections::HashMap;
+use serde::Deserialize;
+
+pub trait JsonLikeOwned: for<'json> JsonLike<'json> {}
+impl<T> JsonLikeOwned for T where T: for<'json> JsonLike<'json> {}
 
 /// A trait for objects that can be used as JSON values
-pub trait JsonLike<'a>: Sized {
+pub trait JsonLike<'a>: Sized + Deserialize<'a> {
     type JsonObject: JsonObjectLike<'a, Value = Self>;
 
     // Constructors
     fn null() -> Self;
+    fn array(arr: Vec<Self>) -> Self;
 
     // Operators
     fn as_array(&'a self) -> Option<&'a Vec<Self>>;
