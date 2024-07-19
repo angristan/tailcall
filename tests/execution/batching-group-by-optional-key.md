@@ -37,13 +37,13 @@ type User {
   response:
     status: 200
     body:
+      - body: bar # no userId for bar
+        id: 3
+        title: foo
       - body: bar
         id: 11
         title: foo
         userId: 1
-      - body: bar # no userId for bar
-        id: 3
-        title: foo
 - request:
     method: GET
     url: http://jsonplaceholder.typicode.com/users?id&foo=bar&id=1 # query should be id&foo=bar&id=1
