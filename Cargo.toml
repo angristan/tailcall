@@ -116,7 +116,7 @@ tracing-subscriber = { version = "0.3.18", features = [
 tracing-opentelemetry = "0.24.0"
 getrandom = { version = "0.2.14", features = ["js"] }
 prometheus = "0.13.4"
-tonic = { version = "0.11.0", default-features = false }
+tonic = { version = "0.12.0", default-features = false }
 opentelemetry-semantic-conventions = "0.15.0"
 opentelemetry = { version = "0.23.0", features = ["trace", "logs", "metrics"] }
 opentelemetry_sdk = { version = "0.23.0", features = [
@@ -152,7 +152,7 @@ rand = "0.8.5"
 tailcall-macros = { path = "tailcall-macros" }
 tailcall-tracker = { path = "tailcall-tracker", optional = true }
 tailcall-typedefs-common = { path = "./tailcall-typedefs-common" }
-tonic-types = "0.11.0"
+tonic-types = "0.12.0"
 datatest-stable = "0.2.9"
 tokio-test = "0.4.4"
 base64 = "0.22.1"
